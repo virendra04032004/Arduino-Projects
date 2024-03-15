@@ -1,0 +1,123 @@
+#include <LiquidCrystal_I2C_Hangul.h>
+
+#include <SoftwareSerial.h>
+
+#include <HX711.h>
+
+// Define the HX711 circuit pins
+const int LOADCELL_DOUT_PIN = 2;
+const int LOADCELL_SCK_PIN = 3;
+
+HX711 scale;
+
+// LCD display configuration
+LiquidCrystal_I2C_Hangul lcd(0x27, 16, 2); // I2C address, number of columns, number of rows
+
+// Define calibration values
+const float calibration_factor = 670.0 ; // Change this value to calibrate
+
+// Critical liquid level threshold
+const int criticalLevelThreshold = 40;// Adjust this value according to your sensor's calibration
+const int lastLevelThreshold = 10;
+
+// GSM module configuration
+SoftwareSerial gsmModule(9, 10); // RX, TX pins of the GSM module
+const int gsmBaudRate = 9600;
+const String recipientPhoneNumber = "+91**********"; // Replace with the phone number to receive notifications
+
+
+// Buzzer configuration
+const int buzzerPin = 9;
+
+void setup() {
+  // Initialize serial communication with the GSM module
+  gsmModule.begin(gsmBaudRate);
+  
+
+  // Initialize LCD display
+  lcd.begin(16, 2);
+  lcd.backlight();
+  lcd.print("Smart Saline");
+  lcd.setCursor(0, 1);
+  lcd.print("Bottle");
+
+  // Set up the buzzer pin
+  pinMode(buzzerPin, OUTPUT);
+  noTone(buzzerPin);
+
+  // Wait for the GSM module to initialize
+  delay(3000);
+
+  // Enable SMS text mode
+  sendATCommand("AT+CMGF=1\r\n");
+
+  // Set the recipient phone number
+  sendATCommand("AT+CMGS=\"" + recipientPhoneNumber + "\"\r\n");
+  gsmModule.println("Smart Saline Bottle initialized. Monitoring liquid level.");
+
+  // Send the Ctrl+Z character to indicate the end of the SMS message
+  gsmModule.write(0x1A);
+  {
+  Serial.begin(9600);
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.set_scale(calibration_factor);  // Set the calibration factor
+  scale.tare();  // Reset the scale to 0
+}
+}
+
+void loop() {
+  float weight = scale.get_units();  // Read the current weight value
+  Serial.print("Weight: ");
+  Serial.print(weight);
+  Serial.println(" g");
+  // Update LCD display with weight
+  lcd.clear();
+  lcd.print("Liquid Level:");
+  lcd.setCursor(0, 1);
+  lcd.print(weight);
+  gsmModule.begin(gsmBaudRate);
+
+  // Check if the liquid level is critical
+  if (lastLevelThreshold <= weight <= criticalLevelThreshold) {
+    // Activate the buzzer for 3 seconds
+    tone(buzzerPin, 1000);
+    delay(3000);
+    noTone(buzzerPin);
+
+    // Send SMS notification with bed number
+    sendATCommand("AT+CMGS=\"" + recipientPhoneNumber + "\"\r\n");
+    gsmModule.println("Alert: Liquid level is critical for Bed 123."); // Replace "123" with the actual bed number
+    // Send the Ctrl+Z character to indicate the end of the SMS message
+    gsmModule.write(0x1A);
+
+    // Wait for the GSM module to send the SMS
+    delay(3000);
+  }
+  else if (weight <= lastLevelThreshold) {
+    tone(buzzerPin, 1000);
+    delay(3000);
+    noTone(buzzerPin);
+
+    sendATCommand("AT+CMGS=\""+ recipientPhoneNumber + "\"\r\n");
+    gsmModule.println("Alert: Liquid Level is near empty for Bed 123.");
+    gsmModule.write(0x1A);
+    delay(3000);
+  }
+
+  // Wait for some time before checking the liquid level again
+  delay(1000);
+  {
+  float weight = scale.get_units();  // Read the current weight value
+  Serial.print("Weight: ");
+  Serial.print(weight);
+  Serial.println(" g");
+}
+}
+
+void sendATCommand(String command) {
+  gsmModule.print(command);
+  delay(1000); // Wait for the response from the GSM module
+  while (gsmModule.available()) {
+    Serial.write(gsmModule.read());
+  }
+}
